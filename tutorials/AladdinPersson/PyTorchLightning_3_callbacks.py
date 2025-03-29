@@ -182,7 +182,7 @@ def main():
     # Hyperparameters
     INPUT_SIZE = 28 * 28
     NUM_CLASSES = 10
-    BATCH_SIZE = 32
+    BATCH_SIZE = 128
     NUM_EPOCHS = 30
     LEARNING_RATE = 0.001
 
@@ -195,7 +195,7 @@ def main():
     dm = MnistDataModule(data_dir=DATA_DIR, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
     # Logger
-    tb_logger = TensorBoardLogger(save_dir=r"..\logs\tb_logs", name="mnist_pl_model_v1")
+    tb_logger = TensorBoardLogger(save_dir=r"..\..\logs\tb_logs", name="mnist_pl_model_v2")
     # Lightning trainer
     trainer = pl.Trainer(min_epochs=1,
                          max_epochs=NUM_EPOCHS,
