@@ -202,6 +202,7 @@ if __name__ == '__main__':
     from datahubs.dl_leaves import make_leaves_dl
 
     DATA_DIR = r'../data/kaggle-classify-leaves'
+
     train_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.RandomHorizontalFlip(),  # 随机水平翻转
@@ -209,32 +210,36 @@ if __name__ == '__main__':
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+
     test_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
+
     train_dl, val_dl, test_dl = make_leaves_dl(data_dir=DATA_DIR,
-                                               batch_size=32,
-                                               train_ratio=0.9,
+                                               batch_size=256,
+                                               train_ratio=0.85,
                                                train_transform=train_transform,
                                                test_transform=test_transform)
+
     # 2. 创建模型实例
     NUM_CLASSES = train_dl.dataset.dataset.num_classes
     print(f"Creating model with {NUM_CLASSES} classes")
     model = ClassifyLeaves(num_classes=NUM_CLASSES, set_device='cuda')
-    # 打印模型结构
-    print("Model structure:")
+    print("Model structure:")  # 打印模型结构
     print(model)
+
     # 3. 训练模型
     model.train_model(train_dl,
                       val_dl,
-                      max_epoch=90,
+                      max_epoch=200,
                       learning_rate=0.0001,
                       weight_decay=0.001,
-                      checkpoint_file_path=r'../checkpoints/kaggle_leaves-1.pth.tar',
+                      checkpoint_file_path=r'../checkpoints/kaggle_leaves-2.pth.tar',
                       resume=True)
+
     # 4. 创建提交文件
     model.create_submission(test_dl,
-                            checkpoint_file_path=r'../checkpoints/kaggle_leaves-1.pth.tar',
-                            submission_file_path=r'../output/submission_kaggle_leaves-1.csv')
+                            checkpoint_file_path=r'../checkpoints/kaggle_leaves-2.pth.tar',
+                            submission_file_path=r'../output/submission_kaggle_leaves-2.csv')
