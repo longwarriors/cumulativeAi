@@ -218,7 +218,7 @@ if __name__ == '__main__':
     ])
 
     train_dl, val_dl, test_dl = make_leaves_dl(data_dir=DATA_DIR,
-                                               batch_size=256,
+                                               batch_size=64,
                                                train_ratio=0.85,
                                                train_transform=train_transform,
                                                test_transform=test_transform)
@@ -233,9 +233,9 @@ if __name__ == '__main__':
     # 3. 训练模型
     model.train_model(train_dl,
                       val_dl,
-                      max_epoch=200,
-                      learning_rate=0.0001,
-                      weight_decay=0.001,
+                      max_epoch=300,
+                      learning_rate=0.0055,
+                      weight_decay=0.025,
                       checkpoint_file_path=r'../checkpoints/kaggle_leaves-2.pth.tar',
                       resume=True)
 
