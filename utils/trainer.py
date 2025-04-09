@@ -25,15 +25,15 @@ class Trainer:
                  loss_fn: Callable,
                  optimizer_type: str = 'adam',
                  scheduler_type: str = 'cosine',
-                 lr: float = 1e-3,
-                 lr_min: float = 1e-5,
+                 learning_rate: float = 1e-3,
+                 min_learning_rate: float = 1e-5,
                  weight_decay: float = 1e-4,
                  clip_grad_norm: float = 5.0,
                  device: Optional[Union[torch.device, str]] = None,
-                 checkpoint_dir: Optional[Union[str, Path]] = None,
+                 checkpoint_dir: Optional[Union[str, Path]] = 'checkpoints',
                  log_dir: Optional[Union[str, Path]] = None,
                  init_weights: bool = True,
-                 init_method: str = 'xavier', ):
+                 init_method: str = 'xavier'):
         """
         初始化训练器 Initialize the Trainer.
         Args:
@@ -41,9 +41,9 @@ class Trainer:
             loss_fn: 损失函数
             optimizer_type: 优化器类型 ('sgd', 'adam', 'adamw', 'ranger')
             scheduler_type: 学习率调度器类型 ('cosine', 'step', 'plateau', 'none')
-            lr: 初始学习率
-            lr_min: 最小学习率（用于学习率调度）
-            weight_decay: 权重衰减系数
+            learning_rate: 初始学习率
+            min_learning_rate: 最小学习率（用于学习率调度）
+            weight_decay: 权重衰减系数， L2正则化在优化器中的实现
             clip_grad_norm: 梯度裁剪的最大范数
             device: 训练设备 ('cuda', 'cpu', None自动选择)
             checkpoint_dir: 检查点保存目录
@@ -56,8 +56,8 @@ class Trainer:
         self.loss_fn = loss_fn
 
         # 训练参数
-        self.lr = lr
-        self.lr_min = lr_min
+        self.lr = learning_rate
+        self.lr_min = min_learning_rate
         self.weight_decay = weight_decay
         self.clip_grad_norm = clip_grad_norm
 
@@ -126,22 +126,22 @@ class Trainer:
         self.model.apply(init_fn)
         self.logger.info(f"模型权重初始化完成，方法: {method}")
 
-    def _create_optimizer(self) -> Optimizer:
+    def _create_optimizer(self, parameters: Optional[List] = None) -> Optimizer:
         # parameters = filter(lambda p: p.requires_grad, self.model.parameters())
-        parameters = [p for p in self.model.parameters() if p.requires_grad]
+        params = parameters if parameters is not None else [p for p in self.model.parameters() if p.requires_grad]
         if self.optimizer_type == 'sgd':
-            return optim.SGD(parameters, lr=self.lr, momentum=0.9, weight_decay=self.weight_decay)
+            return optim.SGD(params, lr=self.lr, momentum=0.9, weight_decay=self.weight_decay)
         elif self.optimizer_type == 'adam':
-            return optim.Adam(parameters, lr=self.lr, weight_decay=self.weight_decay)
+            return optim.Adam(params, lr=self.lr, weight_decay=self.weight_decay)
         elif self.optimizer_type == 'adamw':
-            return optim.AdamW(parameters, lr=self.lr, weight_decay=self.weight_decay)
+            return optim.AdamW(params, lr=self.lr, weight_decay=self.weight_decay)
         elif self.optimizer_type == 'ranger':
             try:
                 from ranger import Ranger
-                return Ranger(parameters, lr=self.lr, weight_decay=self.weight_decay)
+                return Ranger(params, lr=self.lr, weight_decay=self.weight_decay)
             except ImportError:
                 self.logger.warning("Ranger优化器未安装，回退到Adam")
-                return optim.Adam(parameters, lr=self.lr, weight_decay=self.weight_decay)
+                return optim.Adam(params, lr=self.lr, weight_decay=self.weight_decay)
         else:
             raise ValueError(f"不支持的优化器类型:{self.optimizer_type}. 支持类型：'sgd', 'adam', 'adamw', 'ranger'.")
 
@@ -185,12 +185,67 @@ class Trainer:
                     self.logger.info(f"模块 {name} 将被冻结")
             # trainable_params = filter(lambda p: p.requires_grad, self.model.parameters())
             trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-            self.optimizer = self._create_optimizer()
+            self.optimizer = self._create_optimizer(trainable_params)
 
-    def train_epoch(self, train_dataloader: DataLoader,
-                    val_dataloader: DataLoader,
-                    clip_grad_norm: float = 1.0)-> Tuple[float, float]:
+    def train_epoch(self, train_dataloader: DataLoader, clip_grad_norm: float = 1.0) -> Tuple[float, float]:
         self.model.train()
         epoch_loss = 0.0
         epoch_accuracy = 0.0
         batch_count = len(train_dataloader)
+        try:
+            pbar = tqdm(train_dataloader, desc="训练中")
+            for batch_idx, (inputs, targets) in enumerate(pbar):
+                batch_size = inputs.size(0)  # 或 y.size(0)
+                self.model.zero_grad()
+                inputs, targets = inputs.to(self.device), targets.to(self.device)
+                self.optimizer.zero_grad()
+                logits = self.model(inputs)
+                # 获取预测类别索引
+                # probabilities = torch.softmax(logits, dim=1)
+                # y_hat = probabilities.argmax(dim=1)
+                preds = torch.argmax(logits, dim=1)
+                loss = self.loss_fn(logits, targets)
+                loss.backward()
+                nn.utils.clip_grad_norm_(parameters=self.model.parameters(), max_norm=clip_grad_norm)
+                self.optimizer.step()
+                correct = (preds == targets).sum().item()
+                accuracy = correct / batch_size
+                epoch_loss += loss.item() * batch_size  # 按样本数加权
+                epoch_accuracy += accuracy
+                if self.writer:
+                    self.global_step += 1
+                    self.writer.add_scalar("Train/Loss", loss.item(), self.global_step)
+                    self.writer.add_scalar("Train/Accuracy", accuracy, self.global_step)
+                pbar.set_postfix(loss=loss.item(), accuracy=accuracy)
+        except Exception as e:
+            self.logger.error(f"训练过程中发生错误: {e}")
+            raise
+
+        avg_loss = epoch_loss / batch_count
+        avg_accuracy = epoch_accuracy / batch_count
+        return avg_loss, avg_accuracy
+
+    def validate(self, val_dataloader: DataLoader) -> Tuple[float, float]:
+        """在验证集上评估模型"""
+        self.model.eval()
+        val_loss = 0.0
+        val_accuracy = 0.0
+        batch_count = len(val_dataloader)
+        try:
+            with torch.no_grad():
+                pbar = tqdm(val_dataloader, desc="验证中")
+                for inputs, targets in val_dataloader:
+                    inputs, targets = inputs.to(self.device), targets.to(self.device)
+                    logits = self.model(inputs)
+                    preds = torch.argmax(logits, dim=1)
+                    loss = self.loss_fn(logits, targets)
+                    correct = (preds == targets).sum().item()
+                    accuracy = correct / inputs.size(0)
+                    epoch_loss += loss.item() * inputs.size(0)
+
+        avg_loss = epoch_loss / batch_count
+        avg_accuracy = epoch_accuracy / batch_count
+        return avg_loss, avg_accuracy
+
+if __name__ == '__main__':
+    pass
