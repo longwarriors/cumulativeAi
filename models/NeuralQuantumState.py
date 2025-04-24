@@ -3,7 +3,6 @@
 # https://claude.ai/chat/0892aceb-edd6-46a0-857f-2482a5a0dcb2
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 
 
@@ -15,6 +14,7 @@ class RBMQuantumState(nn.Module):
         self.n_visible = n_visible
         self.n_hidden = n_hidden
         self.complex_weights = complex_weights
+        self.softplus = nn.Softplus()
         if complex_weights:  # 复数权重和偏置
             self.W_re = nn.Parameter(torch.randn(n_visible, n_hidden) * 0.01)
             self.W_im = nn.Parameter(torch.randn(n_visible, n_hidden) * 0.01)
@@ -45,9 +45,14 @@ class RBMQuantumState(nn.Module):
             W = torch.complex(self.W_re, self.W_im)
             b_v = torch.complex(self.b_v_re, self.b_v_im)
             b_h = torch.complex(self.b_h_re, self.b_h_im)
+
             linear_visible = torch.matmul(x.float(), b_v)
             linear_hidden = torch.matmul(x.float(), W) + b_h
-            activation = torch.log(1 + torch.exp(linear_hidden))  # softplus激活函数
+
+            activation_re = self.softplus(linear_hidden.real)
+            activation_im = self.softplus(linear_hidden.imag)
+            activation = torch.complex(activation_re, activation_im)
+
             psi = linear_visible + torch.sum(activation, dim=1)
             log_amp = torch.real(psi)
             phase = torch.imag(psi)
@@ -58,8 +63,8 @@ class RBMQuantumState(nn.Module):
             linear_hidden_amp = torch.matmul(x.float(), self.W_amp) + self.b_h_amp
             linear_hidden_phase = torch.matmul(x.float(), self.W_phase) + self.b_h_phase
 
-            activation_amp = torch.log(1 + torch.exp(linear_hidden_amp))
-            activation_phase = torch.log(1 + torch.exp(linear_hidden_phase))
+            activation_amp = self.softplus(linear_hidden_amp)
+            activation_phase = self.softplus(linear_hidden_phase)
 
             log_amp = linear_visible_amp + torch.sum(activation_amp, dim=1)
             phase = linear_visible_phase + torch.sum(activation_phase, dim=1)
@@ -69,6 +74,18 @@ class RBMQuantumState(nn.Module):
     def evaluate_psi(self, x):
         log_amp, phase = self.forward(x)
         return torch.exp(log_amp) * torch.exp(1j * phase)
+
+
+class FFNNQuantumState(nn.Module):
+    pass
+
+
+class CNNQuantumState(nn.Module):
+    pass
+
+
+class AutoregressiveQuantumState(nn.Module):
+    pass
 
 
 class HeisenbergChain:
