@@ -7,6 +7,9 @@ import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms as transforms
+import torchmetrics
+from torchmetrics import MetricCollection
+import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader, random_split
 from tqdm.auto import tqdm
@@ -39,19 +42,34 @@ def train_model(net,
                 valid_loader,
                 criterion,
                 optimizer,
+                metrics_calculator: MetricCollection,
                 device,
                 num_epochs=10):
-    train_losses, train_acc = [], []
-    valid_losses, valid_acc = [], []
-    num_train_batches = len(train_loader)
-    num_valid_batches = len(valid_loader)
+    # 存储训练和验证的损失与指标
+    # https://github.com/copilot/c/542a2c85-3769-4c80-9926-c983e3c08f33
+    history = {"train_loss": [],
+               "train_acc": [],
+               "valid_loss": [],
+               "valid_acc": [],
+               "valid_precision": [],
+               "valid_recall": [],
+               "valid_f1": []}
+    num_classes = metrics_calculator.num_classes
+    # train_losses, train_acc = [], []
+    # valid_losses, valid_acc = [], []
+    # num_train_batches = len(train_loader)
+    # num_valid_batches = len(valid_loader)
 
+    # 开始训练循环
     for epoch in range(num_epochs):
-        # 1.训练阶段
         net.train()
-        running_loss = 0.0
-        num_correct = 0
-        num_samples = 0
+        running_loss: float = 0.0
+        correct_train: int = 0
+        total_train: int = 0
+        # num_correct = 0
+        # num_samples = 0
+
+        # 1.训练阶段
         with tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Train]") as pbar_train:
             for images, labels in pbar_train:
                 batch_size = images.size(0)
