@@ -140,7 +140,7 @@ def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpo
                 # 验证进度条更新loss和accuracy
                 batch_loss = loss.item()
                 batch_acc = torch.sum(preds == labels.data).double() / images.size(0)
-                valid_bar.set_postfix(loss=batch_loss, acc=batch_acc)
+                valid_bar.set_postfix(loss=batch_loss, acc=batch_acc.item())
 
         epoch_valid_loss = valid_loss / len(valid_loader.dataset)
         epoch_valid_acc = valid_corrects.double() / len(valid_loader.dataset)
