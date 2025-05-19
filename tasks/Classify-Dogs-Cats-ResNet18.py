@@ -1,5 +1,6 @@
 # https://huggingface.co/NewBreaker/classify-cat_vs_dog/blob/main/1.ResNet18(98.43%25).py
 # https://zhuanlan.zhihu.com/p/629746685
+# https://claude.ai/chat/a16f2a9e-d7f8-4db1-be87-cd36c54f24ca
 import os
 import copy
 import torchvision
@@ -48,32 +49,140 @@ transform = transforms.Compose([
     transforms.Resize((512, 512)),
     transforms.ToTensor(),
 ])
-# dataset = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train', transform=transform)
-# train_size = int(TRAIN_RATIO * len(dataset))
-# valid_size = len(dataset) - train_size
-# train_set, valid_set = random_split(dataset, [train_size, valid_size])
-# train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-# valid_loader = DataLoader(valid_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+dataset = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train', transform=transform)
+train_size = int(TRAIN_RATIO * len(dataset))
+valid_size = len(dataset) - train_size
+train_set, valid_set = random_split(dataset, [train_size, valid_size])
+train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
+valid_loader = DataLoader(valid_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
 
 # 创建模型
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 PRETRAIN = models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1).to(DEVICE)
 
+# 检查点保存路径
+CHECKPOINT_DIR = os.path.join('../checkpoints', 'resnet18_dogcat.pth')
+if not os.path.exists(CHECKPOINT_DIR):
+    os.makedirs(CHECKPOINT_DIR)
+
 # 修改最后一层适应二分类
-num_features = PRETRAIN.fc.in_features # 512
+num_features = PRETRAIN.fc.in_features  # 512
 PRETRAIN.fc = nn.Linear(num_features, 2).to(DEVICE)
 
 # 冻结预训练层
 for param in PRETRAIN.parameters():
-    param.requires_grad = False # 冻结所有层
-PRETRAIN.fc.requires_grad = True # 只训练最后一层
+    param.requires_grad = False  # 冻结所有层
+
+# 设置最后一层的参数为可训练
+for param in PRETRAIN.fc.parameters():
+    param.requires_grad = True
 
 # 定义损失函数和优化器
 criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(PRETRAIN.fc.parameters(), lr=0.001, momentum=0.9)
+optimizer = optim.SGD(filter(lambda p: p.requires_grad, PRETRAIN.parameters()), lr=0.001, momentum=0.9)
+
 
 # 训练模型
-# https://grok.com/chat/7bcee617-38d4-4925-b851-3b35fe8abc90
-def train_model(model, train_loader, valid_loader, criterion, optimizer, num_epochs=10):
+def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpoint_dir=CHECKPOINT_DIR, num_epochs=10):
     best_acc = 0.0
-    best_model_wts = copy.deepcopy(PRETRAIN.state_dict())
+    best_model_wts = copy.deepcopy(model.state_dict())
+    epoch_bar = tqdm(range(num_epochs), desc='Epochs', unit='epoch')
+    for epoch in epoch_bar:
+        # 训练阶段
+        model.train()
+        running_loss = 0.0
+        running_corrects = 0
+
+        # 训练进度条
+        train_bar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Train]", unit='batch')
+        for images, labels in train_bar:
+            images = images.to(DEVICE)
+            labels = labels.to(DEVICE)
+
+            optimizer.zero_grad()
+            outputs = model(images)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            _, preds = torch.max(outputs, 1)
+            running_loss += loss.item() * images.size(0)
+            running_corrects += torch.sum(preds == labels.data)
+
+            # 训练进度条更新loss和accuracy
+            batch_loss = loss.item()
+            batch_acc = torch.sum(preds == labels.data).double() / images.size(0)
+            train_bar.set_postfix(loss=batch_loss, acc=batch_acc.item())
+
+        epoch_loss = running_loss / len(train_loader.dataset)
+        epoch_acc = running_corrects.double() / len(train_loader.dataset)
+        print(f'Epoch {epoch + 1}/{num_epochs} Train Loss: {epoch_loss:.4f} Acc: {epoch_acc:.4f}')
+
+        # 验证阶段
+        model.eval()
+        valid_loss = 0.0
+        valid_corrects = 0
+
+        # 验证进度条
+        valid_bar = tqdm(valid_loader, desc=f"Epoch {epoch + 1}/{num_epochs} [Valid]", unit='batch')
+        with torch.no_grad():
+            for images, labels in valid_bar:
+                images = images.to(DEVICE)
+                labels = labels.to(DEVICE)
+
+                outputs = model(images)
+                loss = criterion(outputs, labels)
+
+                _, preds = torch.max(outputs, 1)
+                valid_loss += loss.item() * images.size(0)
+                valid_corrects += torch.sum(preds == labels.data)
+
+                # 验证进度条更新loss和accuracy
+                batch_loss = loss.item()
+                batch_acc = torch.sum(preds == labels.data).double() / images.size(0)
+                valid_bar.set_postfix(loss=batch_loss, acc=batch_acc)
+
+        epoch_valid_loss = valid_loss / len(valid_loader.dataset)
+        epoch_valid_acc = valid_corrects.double() / len(valid_loader.dataset)
+        print(f'Epoch {epoch + 1}/{num_epochs} Val Loss: {epoch_valid_loss:.4f} Acc: {epoch_valid_acc:.4f}')
+
+        # 保存epoch_ckpt
+        epoch_ckpt = {
+            'epoch': epoch + 1,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'valid_loss': epoch_valid_loss,
+            'valid_accuracy': epoch_valid_acc,
+        }
+        torch.save(epoch_ckpt, os.path.join(checkpoint_dir, f'checkpoint_epoch_{epoch + 1}.pth'))
+
+        # 保存最佳模型
+        if epoch_valid_acc > best_acc:
+            best_acc = epoch_valid_acc
+            best_model_wts = copy.deepcopy(model.state_dict())
+            torch.save(epoch_ckpt, os.path.join(checkpoint_dir, 'best_model.pth'))
+            print('Best model updated!')
+
+    # 加载最佳模型权重
+    model.load_state_dict(best_model_wts)
+    return model
+
+
+fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, num_epochs=5)
+
+
+# 加载检查点函数
+def load_checkpoint(model, optimizer, checkpoint_path):
+    if os.path.exists(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path)
+        model.load_state_dict(checkpoint['model_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        epoch = checkpoint['epoch']
+        valid_loss = checkpoint['valid_loss']
+        valid_accuracy = checkpoint['valid_accuracy']
+        print(
+            f'Loaded checkpoint from epoch {epoch} with valid loss {valid_loss:.4f} and accuracy {valid_accuracy:.4f}')
+        return model, optimizer, epoch
+    else:
+        print(f'No checkpoint found at {checkpoint_path}, starting from scratch.')
+        return model, optimizer, 0
