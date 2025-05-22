@@ -1,31 +1,36 @@
 # https://huggingface.co/NewBreaker/classify-cat_vs_dog/blob/main/1.ResNet18(98.43%25).py
 # https://zhuanlan.zhihu.com/p/629746685
 # https://claude.ai/chat/a16f2a9e-d7f8-4db1-be87-cd36c54f24ca
-import os
-import copy
-import torchvision
-import torch
+import os, copy, gc, torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision.models import ResNet18_Weights
+from torchvision.models import resnet18, ResNet18_Weights
 from tqdm import tqdm
 from PIL import Image
-from torchvision import datasets, transforms, models
+from torchvision import transforms, models
 from torch.utils.data import Dataset, DataLoader, random_split
 
 
 class DogCatDataset(Dataset):
-    def __init__(self, root_dir, transform=None):
+    def __init__(self, root_dir: str, transform=None, is_train: bool = True):
         self.root_dir = root_dir
         self.transform = transform
         self.img_paths = []
         self.labels = []
-        for filename in os.listdir(root_dir):
-            if filename.endswith(".jpg"):
-                # 从文件名提取标签：cat 为 0，dog 为 1
-                label = 0 if filename.startswith('cat') else 1
-                self.img_paths.append(os.path.join(self.root_dir, filename))
-                self.labels.append(label)
+
+        if is_train:
+            for filename in os.listdir(root_dir):
+                if filename.endswith(('.jpg', '.jpeg', '.png')):
+                    # 从文件名提取标签：cat 为 0，dog 为 1
+                    label = 0 if filename.lower().startswith('cat') else 1
+                    self.img_paths.append(os.path.join(self.root_dir, filename))
+                    self.labels.append(label)
+        else:
+            for filename in os.listdir(root_dir):
+                if filename.endswith(('.jpg', '.jpeg', '.png')):
+                    # 测试集没有标签，所以使用 -1 作为占位符
+                    self.img_paths.append(os.path.join(self.root_dir, filename))
+                    self.labels.append(-1)
 
     def __len__(self):
         return len(self.img_paths)
@@ -45,23 +50,37 @@ TRAIN_RATIO = 0.8
 BATCH_SIZE = 32
 
 # 创建数据集和加载器
-transform = transforms.Compose([
-    transforms.Resize((512, 512)),
-    transforms.ToTensor(),
-])
-dataset = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train', transform=transform)
-train_size = int(TRAIN_RATIO * len(dataset))
-valid_size = len(dataset) - train_size
-train_set, valid_set = random_split(dataset, [train_size, valid_size])
+transform = {
+    'train': transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ]),
+    'inference': transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+    ]),
+}
+
+labelled_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train', transform=transform['train'], is_train=True)
+inference_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/test', transform=transform['inference'], is_train=False)
+train_size = int(TRAIN_RATIO * len(labelled_set))
+valid_size = len(labelled_set) - train_size
+train_set, valid_set = random_split(labelled_set, [train_size, valid_size])
 train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
 valid_loader = DataLoader(valid_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+inference_loader = DataLoader(inference_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+
+# 清理缓存
+gc.collect()
+torch.cuda.empty_cache()
 
 # 创建模型
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-PRETRAIN = models.resnet18(weights=ResNet18_Weights.IMAGENET1K_V1).to(DEVICE)
+PRETRAIN = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1).to(DEVICE)
 
 # 检查点保存路径
-CHECKPOINT_DIR = os.path.join('../checkpoints', 'resnet18_dogcat.pth')
+CHECKPOINT_DIR = os.path.join('../checkpoints', 'resnet18_dogcat')
 if not os.path.exists(CHECKPOINT_DIR):
     os.makedirs(CHECKPOINT_DIR)
 
@@ -83,7 +102,7 @@ optimizer = optim.SGD(filter(lambda p: p.requires_grad, PRETRAIN.parameters()), 
 
 
 # 训练模型
-def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpoint_dir=CHECKPOINT_DIR, num_epochs=10):
+def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpoint_dir, num_epochs=10):
     best_acc = 0.0
     best_model_wts = copy.deepcopy(model.state_dict())
     epoch_bar = tqdm(range(num_epochs), desc='Epochs', unit='epoch')
@@ -168,7 +187,7 @@ def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpo
     return model
 
 
-fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, num_epochs=5)
+fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, CHECKPOINT_DIR, num_epochs=5)
 
 
 # 加载检查点函数
@@ -186,3 +205,40 @@ def load_checkpoint(model, optimizer, checkpoint_path):
     else:
         print(f'No checkpoint found at {checkpoint_path}, starting from scratch.')
         return model, optimizer, 0
+
+
+# 推理函数
+def inference(model, dataloader, device):
+    model.eval()
+    predictions = []
+    with torch.no_grad():
+        for images, _ in tqdm(dataloader, desc="Inference", unit="batch"):
+            images = images.to(device)
+            outputs = model(images)
+            _, preds = torch.max(outputs, 1)
+            predictions.extend(preds.cpu().numpy())
+    return predictions
+
+# 加载最佳模型权重
+best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
+if os.path.exists(best_model_path):
+    checkpoint = torch.load(best_model_path)
+    PRETRAIN.load_state_dict(checkpoint['model_state_dict'])
+    print("Best model loaded for inference.")
+else:
+    print("No best model found. Please train the model first.")
+
+# 对测试集进行推理
+test_predictions = inference(PRETRAIN, inference_loader, DEVICE)
+
+# 保存推理结果
+output_file = os.path.join('../results', 'test_predictions.txt')
+if not os.path.exists('../results'):
+    os.makedirs('../results')
+
+with open(output_file, 'w') as f:
+    for idx, pred in enumerate(test_predictions):
+        f.write(f"Image {idx + 1}: {'Dog' if pred == 1 else 'Cat'}\n")
+
+print(f"Inference completed. Results saved to {output_file}.")
+
