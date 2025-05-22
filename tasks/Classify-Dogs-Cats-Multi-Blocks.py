@@ -3,6 +3,7 @@ from torch import optim, nn
 from torch.utils.data import DataLoader
 
 # https://github.com/copilot/c/056c785d-6708-42f4-bedf-b7d03dca73d9
+# https://claude.ai/chat/51496ea8-ae14-44ba-8524-e76e8da24e17
 class Trainer:
     def __init__(self,
                  model: nn.Module,
