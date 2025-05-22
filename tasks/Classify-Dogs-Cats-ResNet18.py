@@ -1,13 +1,15 @@
 # https://huggingface.co/NewBreaker/classify-cat_vs_dog/blob/main/1.ResNet18(98.43%25).py
 # https://zhuanlan.zhihu.com/p/629746685
 # https://claude.ai/chat/a16f2a9e-d7f8-4db1-be87-cd36c54f24ca
+# https://www.kaggle.com/competitions/dogs-vs-cats-redux-kernels-edition
 import os, copy, gc, torch
 import torch.nn as nn
 import torch.optim as optim
+import pandas as pd
 from torchvision.models import resnet18, ResNet18_Weights
 from tqdm import tqdm
 from PIL import Image
-from torchvision import transforms, models
+from torchvision import transforms
 from torch.utils.data import Dataset, DataLoader, random_split
 
 
@@ -62,8 +64,10 @@ transform = {
     ]),
 }
 
-labelled_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train', transform=transform['train'], is_train=True)
-inference_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/test', transform=transform['inference'], is_train=False)
+labelled_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/train',
+                             transform=transform['train'], is_train=True)
+inference_set = DogCatDataset(root_dir='../data/kaggle-dogs-vs-cats-redux-kernels-edition/test',
+                              transform=transform['inference'], is_train=False)
 train_size = int(TRAIN_RATIO * len(labelled_set))
 valid_size = len(labelled_set) - train_size
 train_set, valid_set = random_split(labelled_set, [train_size, valid_size])
@@ -187,58 +191,46 @@ def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpo
     return model
 
 
-fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, CHECKPOINT_DIR, num_epochs=5)
-
-
-# 加载检查点函数
-def load_checkpoint(model, optimizer, checkpoint_path):
-    if os.path.exists(checkpoint_path):
-        checkpoint = torch.load(checkpoint_path)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        epoch = checkpoint['epoch']
-        valid_loss = checkpoint['valid_loss']
-        valid_accuracy = checkpoint['valid_accuracy']
-        print(
-            f'Loaded checkpoint from epoch {epoch} with valid loss {valid_loss:.4f} and accuracy {valid_accuracy:.4f}')
-        return model, optimizer, epoch
-    else:
-        print(f'No checkpoint found at {checkpoint_path}, starting from scratch.')
-        return model, optimizer, 0
+# fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, CHECKPOINT_DIR, num_epochs=5)
 
 
 # 推理函数
 def inference(model, dataloader, device):
     model.eval()
     predictions = []
+    image_ids = []
+    filenames = [os.path.basename(dataloader.dataset.img_paths[i]) for i in range(len(dataloader.dataset))]
+    infer_bar = tqdm(enumerate(dataloader), desc='Inference', unit='image')
     with torch.no_grad():
-        for images, _ in tqdm(dataloader, desc="Inference", unit="batch"):
+        for batch_idx, (images, _) in infer_bar:
+            batch_size = images.size(0)
+            batch_indices = range(batch_idx * batch_size, (batch_idx + 1) * batch_size)
+            batch_filenames = [filenames[idx] for idx in batch_indices]  # Get image IDs for this batch
+            batch_ids = [int(os.path.splitext(fname)[0]) for fname in batch_filenames]
             images = images.to(device)
             outputs = model(images)
             _, preds = torch.max(outputs, 1)
-            predictions.extend(preds.cpu().numpy())
-    return predictions
+            batch_preds = preds.cpu().numpy() # Get binary predictions (0=cat, 1=dog)
+            predictions.extend(batch_preds)
+            image_ids.extend(batch_ids)
+    return image_ids, predictions
 
-# 加载最佳模型权重
-best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
-if os.path.exists(best_model_path):
-    checkpoint = torch.load(best_model_path)
-    PRETRAIN.load_state_dict(checkpoint['model_state_dict'])
-    print("Best model loaded for inference.")
-else:
-    print("No best model found. Please train the model first.")
+if __name__ == '__main__':
+    # 加载最佳模型权重
+    best_model_path = os.path.join(CHECKPOINT_DIR, 'best_model.pth')
+    if os.path.exists(best_model_path):
+        checkpoint = torch.load(best_model_path)
+        PRETRAIN.load_state_dict(checkpoint['model_state_dict'])
+        print("Best model loaded for inference.")
+    else:
+        print("No best model found. Please train the model first.")
 
-# 对测试集进行推理
-test_predictions = inference(PRETRAIN, inference_loader, DEVICE)
+    # 对测试集进行推理
+    test_image_ids, test_predictions = inference(PRETRAIN, inference_loader, DEVICE)
+    df = pd.DataFrame({'id': test_image_ids, 'label': test_predictions})
+    df = df.sort_values(by='id')
 
-# 保存推理结果
-output_file = os.path.join('../results', 'test_predictions.txt')
-if not os.path.exists('../results'):
-    os.makedirs('../results')
-
-with open(output_file, 'w') as f:
-    for idx, pred in enumerate(test_predictions):
-        f.write(f"Image {idx + 1}: {'Dog' if pred == 1 else 'Cat'}\n")
-
-print(f"Inference completed. Results saved to {output_file}.")
-
+    # 保存推理结果
+    output_file = os.path.join('../output', 'dogs_cats_submission1.csv')
+    df.to_csv(output_file, index=False)
+    print(f"Inference completed. Results saved to {output_file}.")
