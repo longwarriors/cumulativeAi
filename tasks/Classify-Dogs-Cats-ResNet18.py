@@ -191,15 +191,18 @@ def train_model(model, train_loader, valid_loader, criterion, optimizer, checkpo
     return model
 
 
-# fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, CHECKPOINT_DIR, num_epochs=5)
+fine_tune_model = train_model(PRETRAIN, train_loader, valid_loader, criterion, optimizer, CHECKPOINT_DIR, num_epochs=5)
 
 
 # 推理函数
-def inference(model, dataloader, device):
+# https://grok.com/chat/bc51ec64-f052-48d8-9479-098bf7cd7655
+def inference(model, dataloader, device, output_dir="../output"):
     model.eval()
     predictions = []
     image_ids = []
-    filenames = [os.path.basename(dataloader.dataset.img_paths[i]) for i in range(len(dataloader.dataset))]
+    filenames = [os.path.basename(path) for path in dataloader.dataset.img_paths]
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, "dogs_cats_submission.csv")
     infer_bar = tqdm(enumerate(dataloader), desc='Inference', unit='image')
     with torch.no_grad():
         for batch_idx, (images, _) in infer_bar:
