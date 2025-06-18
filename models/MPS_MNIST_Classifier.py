@@ -502,8 +502,8 @@ def load_and_preprocess_mnist(config: MNISTConfig) -> Tuple[DataLoader, DataLoad
     ])
 
     # 加载数据
-    train_dataset = datasets.MNIST('./data', train=True, download=True, transform=transform)
-    test_dataset = datasets.MNIST('./data', train=False, transform=transform)
+    train_dataset = datasets.MNIST('../data/MNIST', train=True, download=True, transform=transform)
+    test_dataset = datasets.MNIST('../data/MNIST', train=False, download=True, transform=transform)
 
     # 数据预处理：展平并转换为one-hot
     def preprocess_dataset(dataset):
