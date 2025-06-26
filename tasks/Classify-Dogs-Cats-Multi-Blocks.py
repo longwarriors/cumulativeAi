@@ -43,19 +43,4 @@ class_weights = compute_class_weight(class_weight='balanced',
 class_weights = torch.as_tensor(class_weights, dtype=torch.float)
 
 
-if __name__ == "__main__":
-    num_samples = 3
-    num_classes = 5
-    labels = torch.randint(0, num_classes, (num_samples,))
-    print(labels)
-    logits = torch.randn(num_samples, num_classes)
-    print(logits)
-    probabilities = F.softmax(logits, dim=1)
-    print(probabilities)
-    loss_fn = nn.NLLLoss()
-    loss = loss_fn(probabilities.log(), labels)
-    print(loss)
-    each_probability = probabilities.gather(1, labels.unsqueeze(1))
-    print(each_probability)
-    res = -each_probability.log().mean()
-    print(res)
+
