@@ -14,6 +14,92 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Callable, Tuple, List, Union
 
 
+def train_epoch(
+        model, dl_train: DataLoader, optimizer, loss_fn, device
+) -> Tuple[float, float]:
+    model.train()
+    batch_count = len(dl_train)
+    total_loss: float = 0.0
+    total_correct: int = 0
+    total_samples: int = 0
+
+    # 使用 with 语句确保 tqdm 正确关闭
+    with tqdm(dl_train, desc="训练中", leave=False) as pbar_train:
+        for batch_idx, (X, y) in enumerate(pbar_train):
+            X, y = X.to(device), y.to(device)
+            batch_size = X.size(0)
+
+            # 前向传播
+            optimizer.zero_grad()
+            logits = model(X)
+            loss = loss_fn(logits, y)
+
+            # 反向传播
+            loss.backward()
+            optimizer.step()
+
+            # 计算准确率和累积损失
+            with torch.no_grad():
+                preds = torch.argmax(logits, dim=-1)
+                batch_correct = (preds == y).sum().item()
+                total_correct += batch_correct
+                total_loss += loss.item() * batch_size  # 累积加权损失
+                total_samples += batch_size
+                current_accuracy = (
+                        total_correct / total_samples
+                )  # 迭代到当前batch的平均准确率
+                pbar_train.set_postfix(
+                    {
+                        "batch_loss": f"{loss.item():.4f}",
+                        "epoch_accuarcy": f"{current_accuracy:.4f}",
+                    }
+                )
+    # 计算整个epoch的平均损失和准确率
+    avg_epoch_loss = total_loss / total_samples
+    avg_epoch_accuracy = total_correct / total_samples
+    return avg_epoch_loss, avg_epoch_accuracy
+
+
+def validate_epoch(model, dl_valid: DataLoader, loss_fn, device) -> Tuple[float, float]:
+    model.eval()
+    batch_count = len(dl_valid)
+    total_loss: float = 0.0
+    total_correct: int = 0
+    total_samples: int = 0
+    with torch.no_grad():
+        with tqdm(dl_valid, desc="验证中", leave=False) as pbar_valid:
+            for batch_idx, (X, y) in enumerate(pbar_valid):
+                X, y = X.to(device), y.to(device)
+                batch_size = X.size(0)
+
+                # 前向传播
+                logits = model(X)
+                loss = loss_fn(logits, y)
+
+                # 计算预测结果和准确率
+                preds = torch.argmax(logits, dim=-1)
+                batch_correct = (preds == y).sum().item()
+
+                # 累积统计
+                total_correct += batch_correct
+                total_loss += loss.item() * batch_size  # 累积加权损失
+                total_samples += batch_size
+
+                # 更新 tqdm 进度条
+                current_accuracy = (
+                        total_correct / total_samples
+                )  # 迭代到当前batch的平均准确率
+                pbar_valid.set_postfix(
+                    {
+                        "batch_loss": f"{loss.item():.4f}",
+                        "epoch_accuarcy": f"{current_accuracy:.4f}",
+                    }
+                )
+    avg_epoch_loss = total_loss / total_samples
+    avg_epoch_accuracy = total_correct / total_samples
+    return avg_epoch_loss, avg_epoch_accuracy
+
+
 class Trainer:
     """
     PyTorch Trainer class for training and evaluating models.
@@ -242,10 +328,10 @@ class Trainer:
                     correct = (preds == targets).sum().item()
                     accuracy = correct / inputs.size(0)
                     epoch_loss += loss.item() * inputs.size(0)
-
+        except Exception as e:
+            self.logger.error(f"验证过程中发生错误: {e}")
+            raise
         avg_loss = epoch_loss / batch_count
         avg_accuracy = epoch_accuracy / batch_count
         return avg_loss, avg_accuracy
 
-if __name__ == '__main__':
-    pass
