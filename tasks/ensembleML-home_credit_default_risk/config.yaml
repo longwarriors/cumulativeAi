@@ -1,0 +1,60 @@
+# 数据路径配置
+datafiles:
+  application_train: "../../data/kaggle-home-credit-default-risk/application_train.csv"
+  application_test: "../../data/kaggle-home-credit-default-risk/application_test.csv"
+  bureau: "../../data/kaggle-home-credit-default-risk/bureau.csv"
+  bureau_balance: "../../data/kaggle-home-credit-default-risk/bureau_balance.csv"
+  credit_card_balance: "../../data/kaggle-home-credit-default-risk/credit_card_balance.csv"
+  previous_application: "../../data/kaggle-home-credit-default-risk/previous_application.csv"
+  pos_cash_balance: "../../data/kaggle-home-credit-default-risk/POS_CASH_balance.csv"
+  installments_payments: "../../data/kaggle-home-credit-default-risk/installments_payments.csv"
+  sample_submission: "../../data/kaggle-home-credit-default-risk/sample_submission.csv"
+
+# XGBoost模型参数配置
+xgboost_params:
+  max_depth: 6
+  learning_rate: 0.02
+  n_estimators: 2000
+  subsample: 0.8
+  colsample_bytree: 0.8
+  min_child_weight: 3
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  objective: 'binary:logistic'
+  eval_metric: 'auc'
+  random_state: 42
+  n_jobs: -1
+
+# LightGBM模型参数配置
+lightgbm_params:
+  objective: 'binary'
+  metric: 'auc'
+  boosting_type: 'gbdt'
+  num_leaves: 31
+  learning_rate: 0.02
+  feature_fraction: 0.9
+  bagging_fraction: 0.8
+  bagging_freq: 5
+  min_child_samples: 20
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+  verbose: -1
+  random_state: 42
+  n_estimators: 2000
+  n_jobs: -1
+
+# Logistic回归模型参数配置
+logistic_regression_params:
+  penalty: 'l2'
+  C: 1.0
+  solver: 'liblinear'
+  random_state: 42
+
+# 训练参数
+train_params:
+  n_folds: 5 # K 折交叉验证
+  test_size: 0.2
+  random_state: 42
+  stratify: true
+  n_splits: 5
+  shuffle: true
