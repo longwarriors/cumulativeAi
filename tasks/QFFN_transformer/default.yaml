@@ -1,0 +1,20 @@
+training:
+  num_steps: 1000
+  batch_size: 8
+  learning_rate: 0.0001
+  seq_len: 128
+
+model:
+  type: QFFNTransformer
+  num_layers: 4
+  d_model: 512
+  num_heads: 8
+  num_qubits: 16
+  use_quantum_ffn: true
+  dropout_rate: 0.1
+  activation: relu
+
+quantum:
+  q_device: "lightning.gpu"
+
+tokenizer_name: "gpt2"
